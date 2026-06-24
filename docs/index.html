@@ -357,6 +357,58 @@
       white-space: nowrap;
     }
 
+    .csv-panel {
+      display: none;
+      margin-top: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      overflow: hidden;
+    }
+
+    .csv-panel-header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface-soft);
+    }
+
+    .csv-panel-title {
+      font-weight: 750;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .csv-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 10px 12px;
+    }
+
+    .csv-actions button {
+      min-height: 38px;
+      flex: 1 1 130px;
+    }
+
+    .csv-preview {
+      width: 100%;
+      min-height: 150px;
+      max-height: 260px;
+      resize: vertical;
+      border: 0;
+      border-top: 1px solid var(--line);
+      border-radius: 0;
+      padding: 10px 12px;
+      font: 12px/1.4 Consolas, "Liberation Mono", monospace;
+      background: var(--surface);
+      color: var(--ink);
+    }
+
     .status-line {
       min-height: 42px;
       margin-top: 12px;
@@ -548,6 +600,18 @@
             <div id="fileList" class="file-list" style="margin-top:12px">
               <div class="file-row"><span class="file-name">No files loaded</span><span class="file-size">-</span></div>
             </div>
+            <div id="csvPanel" class="csv-panel">
+              <div class="csv-panel-header">
+                <div id="csvTitle" class="csv-panel-title">CSV ready</div>
+                <button id="closeCsvPanel"><svg><use href="#icon-trash"/></svg>Close</button>
+              </div>
+              <div class="csv-actions">
+                <button id="shareCsv" class="primary"><svg><use href="#icon-send"/></svg>Share CSV</button>
+                <button id="copyCsv"><svg><use href="#icon-file"/></svg>Copy CSV</button>
+                <button id="openCsv"><svg><use href="#icon-download"/></svg>Open Preview</button>
+              </div>
+              <textarea id="csvPreview" class="csv-preview" readonly></textarea>
+            </div>
           </div>
         </div>
 
@@ -603,6 +667,13 @@
     const openBluefyButton = document.getElementById('openBluefy');
     const installBluefyButton = document.getElementById('installBluefy');
     const fileList = document.getElementById('fileList');
+    const csvPanel = document.getElementById('csvPanel');
+    const csvTitle = document.getElementById('csvTitle');
+    const csvPreview = document.getElementById('csvPreview');
+    const shareCsvButton = document.getElementById('shareCsv');
+    const copyCsvButton = document.getElementById('copyCsv');
+    const openCsvButton = document.getElementById('openCsv');
+    const closeCsvPanelButton = document.getElementById('closeCsvPanel');
 
     const metricMode = document.getElementById('metricMode');
     const metricInterval = document.getElementById('metricInterval');
@@ -616,6 +687,8 @@
     let capture = '';
     let fileCapture = '';
     let fileName = 'fruitometer_data.csv';
+    let lastCsvText = '';
+    let lastCsvFileName = 'fruitometer_data.csv';
     let receivingFile = false;
     let collectingFiles = false;
     let collectingStatus = false;
@@ -659,6 +732,10 @@
     function isIos() {
       return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
         (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    }
+
+    function isBluefyLike() {
+      return isIos() || /Bluefy/i.test(navigator.userAgent);
     }
 
     function showBrowserHelpIfNeeded() {
@@ -851,19 +928,38 @@
         .replaceAll("'", '&#039;');
     }
 
+    function showCsvPanel(csvText, name) {
+      lastCsvText = csvText;
+      lastCsvFileName = name;
+      csvTitle.textContent = `${name} ready`;
+      csvPreview.value = csvText;
+      csvPanel.style.display = 'block';
+    }
+
+    function directDownloadCsv(csvText, name) {
+      const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }
+
     function saveCsv() {
       if (!fileCapture.trim()) {
         setStatus('No data received.');
         return;
       }
 
-      const blob = new Blob([fileCapture], { type: 'text/csv' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      a.click();
-      URL.revokeObjectURL(url);
+      showCsvPanel(fileCapture, fileName);
+
+      if (isBluefyLike()) {
+        setStatus(`${fileName} received. Use Share CSV or Copy CSV on this device.`);
+        return;
+      }
+
+      directDownloadCsv(fileCapture, fileName);
       setStatus(`Downloaded ${fileName}.`);
     }
 
@@ -940,6 +1036,62 @@
     clearConsoleButton.addEventListener('click', () => {
       terminal.textContent = '';
       capture = '';
+    });
+
+    shareCsvButton.addEventListener('click', async () => {
+      if (!lastCsvText) {
+        setStatus('No CSV is ready yet.');
+        return;
+      }
+
+      try {
+        const file = new File([lastCsvText], lastCsvFileName, { type: 'text/csv' });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], title: lastCsvFileName, text: 'Fruitometer CSV data' });
+          setStatus('CSV shared.');
+          return;
+        }
+        if (navigator.share) {
+          await navigator.share({ title: lastCsvFileName, text: lastCsvText });
+          setStatus('CSV shared as text.');
+          return;
+        }
+        setStatus('Sharing is not available here. Use Copy CSV.');
+      } catch (error) {
+        setStatus(`Share failed: ${error.message}`);
+      }
+    });
+
+    copyCsvButton.addEventListener('click', async () => {
+      if (!lastCsvText) {
+        setStatus('No CSV is ready yet.');
+        return;
+      }
+
+      try {
+        await navigator.clipboard.writeText(lastCsvText);
+        setStatus('CSV copied to clipboard.');
+      } catch (error) {
+        csvPreview.focus();
+        csvPreview.select();
+        setStatus('Select-all is ready. Use copy from the browser menu.');
+      }
+    });
+
+    openCsvButton.addEventListener('click', () => {
+      if (!lastCsvText) {
+        setStatus('No CSV is ready yet.');
+        return;
+      }
+
+      const blob = new Blob([lastCsvText], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+    });
+
+    closeCsvPanelButton.addEventListener('click', () => {
+      csvPanel.style.display = 'none';
     });
 
     openBluefyButton.addEventListener('click', () => {
