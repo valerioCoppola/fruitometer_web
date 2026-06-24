@@ -625,6 +625,9 @@
               <div class="metric"><div class="metric-label">Interval</div><div id="metricInterval" class="metric-value">-</div></div>
               <div class="metric"><div class="metric-label">Active File</div><div id="metricFile" class="metric-value">-</div></div>
               <div class="metric"><div class="metric-label">Next Measure</div><div id="metricNext" class="metric-value">-</div></div>
+              <div class="metric"><div class="metric-label">Battery</div><div id="metricBattery" class="metric-value">-</div></div>
+              <div class="metric"><div class="metric-label">Voltage</div><div id="metricVoltage" class="metric-value">-</div></div>
+              <div class="metric"><div class="metric-label">Charging</div><div id="metricCharging" class="metric-value">-</div></div>
             </div>
           </div>
         </div>
@@ -679,6 +682,9 @@
     const metricInterval = document.getElementById('metricInterval');
     const metricFile = document.getElementById('metricFile');
     const metricNext = document.getElementById('metricNext');
+    const metricBattery = document.getElementById('metricBattery');
+    const metricVoltage = document.getElementById('metricVoltage');
+    const metricCharging = document.getElementById('metricCharging');
 
     let device;
     let rxCharacteristic;
@@ -905,6 +911,9 @@
       if (key === 'interval_s') metricInterval.textContent = value ? `${value} s` : '-';
       if (key === 'active_file') metricFile.textContent = value || '-';
       if (key === 'next_measurement_in_s') metricNext.textContent = value ? `${value} s` : '-';
+      if (key === 'battery_percent') metricBattery.textContent = value ? `${value}%` : '-';
+      if (key === 'battery_mv') metricVoltage.textContent = value ? `${(Number(value) / 1000).toFixed(2)} V` : '-';
+      if (key === 'charging') metricCharging.textContent = value === '1' ? 'yes' : 'no';
     }
 
     function renderFileList() {
