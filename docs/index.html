@@ -234,6 +234,10 @@
       gap: 8px;
     }
 
+    .input-row + .input-row {
+      margin-top: 10px;
+    }
+
     input {
       width: 100%;
       min-height: 44px;
@@ -580,6 +584,10 @@
           </div>
           <div class="panel-body">
             <div class="input-row">
+              <input id="deviceId" type="text" maxlength="12" pattern="[A-Za-z0-9_-]+" value="001" aria-label="Device ID">
+              <button id="setDeviceId" disabled><svg><use href="#icon-shield"/></svg>Set ID</button>
+            </div>
+            <div class="input-row">
               <input id="interval" type="number" min="10" step="1" value="3600" inputmode="numeric" aria-label="Measurement interval in seconds">
               <button id="setInterval" disabled><svg><use href="#icon-clock"/></svg>Set Interval</button>
             </div>
@@ -621,6 +629,8 @@
           </div>
           <div class="panel-body">
             <div class="metrics">
+              <div class="metric"><div class="metric-label">Device ID</div><div id="metricDeviceId" class="metric-value">-</div></div>
+              <div class="metric"><div class="metric-label">BLE Name</div><div id="metricBleName" class="metric-value">-</div></div>
               <div class="metric"><div class="metric-label">Mode</div><div id="metricMode" class="metric-value">-</div></div>
               <div class="metric"><div class="metric-label">Interval</div><div id="metricInterval" class="metric-value">-</div></div>
               <div class="metric"><div class="metric-label">Active File</div><div id="metricFile" class="metric-value">-</div></div>
@@ -659,6 +669,8 @@
     const disconnectButton = document.getElementById('disconnect');
     const downloadCurrentButton = document.getElementById('downloadCurrent');
     const syncTimeButton = document.getElementById('syncTime');
+    const setDeviceIdButton = document.getElementById('setDeviceId');
+    const deviceIdInput = document.getElementById('deviceId');
     const setIntervalButton = document.getElementById('setInterval');
     const intervalInput = document.getElementById('interval');
     const clearDataButton = document.getElementById('clearData');
@@ -678,6 +690,8 @@
     const openCsvButton = document.getElementById('openCsv');
     const closeCsvPanelButton = document.getElementById('closeCsvPanel');
 
+    const metricDeviceId = document.getElementById('metricDeviceId');
+    const metricBleName = document.getElementById('metricBleName');
     const metricMode = document.getElementById('metricMode');
     const metricInterval = document.getElementById('metricInterval');
     const metricFile = document.getElementById('metricFile');
@@ -722,7 +736,7 @@
       connectButton.disabled = connected;
       disconnectButton.disabled = !connected;
       downloadCurrentButton.disabled = false;
-      document.querySelectorAll('[data-command], #syncTime, #setInterval, #clearData, #send, #saveCapture')
+      document.querySelectorAll('[data-command], #syncTime, #setDeviceId, #setInterval, #clearData, #send, #saveCapture')
         .forEach((el) => { el.disabled = !connected; });
     }
 
@@ -907,6 +921,11 @@
     function updateMetric(line) {
       const [key, ...rest] = line.split('=');
       const value = rest.join('=');
+      if (key === 'device_id') {
+        metricDeviceId.textContent = value || '-';
+        if (value) deviceIdInput.value = value;
+      }
+      if (key === 'ble_name') metricBleName.textContent = value || '-';
       if (key === 'mode') metricMode.textContent = value || '-';
       if (key === 'interval_s') metricInterval.textContent = value ? `${value} s` : '-';
       if (key === 'active_file') metricFile.textContent = value || '-';
@@ -1008,6 +1027,16 @@
 
     syncTimeButton.addEventListener('click', () => {
       sendCommand(`time ${Math.floor(Date.now() / 1000)}`);
+    });
+
+    setDeviceIdButton.addEventListener('click', async () => {
+      const value = deviceIdInput.value.trim();
+      if (!/^[A-Za-z0-9_-]{1,12}$/.test(value)) {
+        setStatus('Use 1-12 letters, numbers, dash or underscore for the ID.');
+        return;
+      }
+      await sendCommand(`set id ${value}`);
+      await sendCommand('status', false);
     });
 
     setIntervalButton.addEventListener('click', () => {
