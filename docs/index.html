@@ -337,7 +337,7 @@
 
     .file-row {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-columns: minmax(0, 1fr) auto auto;
       gap: 10px;
       align-items: center;
       padding: 10px 12px;
@@ -359,6 +359,17 @@
     .file-size {
       color: var(--muted);
       white-space: nowrap;
+    }
+
+    .file-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .file-actions button {
+      min-height: 34px;
+      padding: 0 10px;
+      font-size: 13px;
     }
 
     .csv-panel {
@@ -459,6 +470,16 @@
 
       .terminal {
         min-height: 300px;
+      }
+
+      .file-row {
+        grid-template-columns: 1fr;
+        align-items: stretch;
+      }
+
+      .file-actions {
+        display: grid;
+        grid-template-columns: 1fr;
       }
 
       button {
@@ -567,7 +588,7 @@
           </div>
           <div class="panel-body">
             <div class="quick-grid">
-              <button id="downloadCurrent" class="primary" disabled><svg><use href="#icon-download"/></svg>Download Current CSV</button>
+              <button id="downloadCurrent" class="primary" disabled><svg><use href="#icon-file"/></svg>Preview Current CSV</button>
               <button data-command="status" class="blue" disabled><svg><use href="#icon-shield"/></svg>Status</button>
               <button id="syncTime" disabled><svg><use href="#icon-clock"/></svg>Sync Time</button>
               <button data-command="measure now" disabled><svg><use href="#icon-gauge"/></svg>Measure Now</button>
@@ -601,12 +622,23 @@
           </div>
           <div class="panel-body">
             <div class="control-grid">
-              <button data-command="data get current" disabled><svg><use href="#icon-download"/></svg>Get Current</button>
+              <button id="previewCurrent" disabled><svg><use href="#icon-file"/></svg>Preview Current</button>
+              <button id="downloadAll" class="primary" disabled><svg><use href="#icon-download"/></svg>Download All CSVs</button>
               <button data-command="data new" disabled><svg><use href="#icon-plus"/></svg>New File</button>
               <button id="clearData" class="danger" disabled><svg><use href="#icon-trash"/></svg>Clear Data</button>
             </div>
             <div id="fileList" class="file-list" style="margin-top:12px">
               <div class="file-row"><span class="file-name">No files loaded</span><span class="file-size">-</span></div>
+            </div>
+            <div id="previewPanel" class="csv-panel">
+              <div class="csv-panel-header">
+                <div id="previewTitle" class="csv-panel-title">Preview ready</div>
+                <button id="closePreviewPanel"><svg><use href="#icon-trash"/></svg>Close</button>
+              </div>
+              <div class="csv-actions">
+                <button id="downloadPreviewed" class="primary"><svg><use href="#icon-download"/></svg>Download This File</button>
+              </div>
+              <textarea id="dataPreview" class="csv-preview" readonly></textarea>
             </div>
             <div id="csvPanel" class="csv-panel">
               <div class="csv-panel-header">
@@ -668,6 +700,8 @@
     const connectButton = document.getElementById('connect');
     const disconnectButton = document.getElementById('disconnect');
     const downloadCurrentButton = document.getElementById('downloadCurrent');
+    const previewCurrentButton = document.getElementById('previewCurrent');
+    const downloadAllButton = document.getElementById('downloadAll');
     const syncTimeButton = document.getElementById('syncTime');
     const setDeviceIdButton = document.getElementById('setDeviceId');
     const deviceIdInput = document.getElementById('deviceId');
@@ -682,6 +716,11 @@
     const openBluefyButton = document.getElementById('openBluefy');
     const installBluefyButton = document.getElementById('installBluefy');
     const fileList = document.getElementById('fileList');
+    const previewPanel = document.getElementById('previewPanel');
+    const previewTitle = document.getElementById('previewTitle');
+    const dataPreview = document.getElementById('dataPreview');
+    const downloadPreviewedButton = document.getElementById('downloadPreviewed');
+    const closePreviewPanelButton = document.getElementById('closePreviewPanel');
     const csvPanel = document.getElementById('csvPanel');
     const csvTitle = document.getElementById('csvTitle');
     const csvPreview = document.getElementById('csvPreview');
@@ -707,11 +746,19 @@
     let capture = '';
     let fileCapture = '';
     let fileName = 'fruitometer_data.csv';
+    let previewCapture = '';
+    let previewFileName = 'fruitometer_data.csv';
+    let previewFilePath = '';
     let lastCsvText = '';
     let lastCsvFileName = 'fruitometer_data.csv';
     let receivingFile = false;
+    let receivingPreview = false;
     let collectingFiles = false;
     let collectingStatus = false;
+    let fileTransferMode = 'idle';
+    let downloadAllQueue = [];
+    let downloadAllParts = [];
+    let downloadAllHeader = '';
     let fileRows = [];
     let downloadPending = false;
     let commandQueue = Promise.resolve();
@@ -736,7 +783,7 @@
       connectButton.disabled = connected;
       disconnectButton.disabled = !connected;
       downloadCurrentButton.disabled = false;
-      document.querySelectorAll('[data-command], #syncTime, #setDeviceId, #setInterval, #clearData, #send, #saveCapture')
+      document.querySelectorAll('[data-command], .file-preview, #previewCurrent, #downloadAll, #syncTime, #setDeviceId, #setInterval, #clearData, #send, #saveCapture')
         .forEach((el) => { el.disabled = !connected; });
     }
 
@@ -827,6 +874,10 @@
       return commandQueue;
     }
 
+    function cleanDownloadName(value, fallback = 'fruitometer_data.csv') {
+      return (value || fallback).replace(/^\//, '').replace(/[^a-zA-Z0-9_.-]/g, '_');
+    }
+
     function handleNotification(event) {
       const chunk = new TextDecoder().decode(event.target.value);
       receiveText += chunk;
@@ -844,17 +895,24 @@
       if (line.startsWith('FILE_BEGIN')) {
         receivingFile = true;
         fileCapture = '';
-        fileName = line.split(/\s+/)[1] || 'fruitometer_data.csv';
-        fileName = fileName.replace(/^\//, '').replace(/[^a-zA-Z0-9_.-]/g, '_');
+        fileName = cleanDownloadName(line.split(/\s+/)[1]);
         log(raw);
-        setStatus('Downloading data...');
+        setStatus(fileTransferMode === 'downloadAll' ? `Downloading ${fileName}...` : 'Downloading data...');
         return;
       }
 
       if (line.startsWith('FILE_END')) {
         receivingFile = false;
-        downloadPending = false;
         log(raw);
+
+        if (fileTransferMode === 'downloadAll') {
+          addFileToCombinedCsv(fileCapture, fileName);
+          startNextAllDownload();
+          return;
+        }
+
+        downloadPending = false;
+        fileTransferMode = 'idle';
         saveCsv();
         setBusy(false);
         return;
@@ -862,6 +920,34 @@
 
       if (receivingFile) {
         fileCapture += raw;
+        log(raw);
+        return;
+      }
+
+      if (line.startsWith('PREVIEW_BEGIN')) {
+        receivingPreview = true;
+        previewCapture = '';
+        previewFilePath = line.split(/\s+/)[1] || previewFilePath || '';
+        previewFileName = cleanDownloadName(previewFilePath);
+        log(raw);
+        setStatus(`Loading preview for ${previewFileName}...`);
+        return;
+      }
+
+      if (line.startsWith('PREVIEW_END')) {
+        receivingPreview = false;
+        downloadPending = false;
+        fileTransferMode = 'idle';
+        previewFilePath = line.split(/\s+/)[1] || previewFilePath || '';
+        previewFileName = cleanDownloadName(previewFilePath);
+        log(raw);
+        showPreviewPanel(previewCapture, previewFileName, previewFilePath);
+        setBusy(false);
+        return;
+      }
+
+      if (receivingPreview) {
+        previewCapture += raw;
         log(raw);
         return;
       }
@@ -883,7 +969,11 @@
       if (collectingFiles && line) {
         const comma = line.lastIndexOf(',');
         if (comma > 0) {
-          fileRows.push({ name: line.slice(0, comma), size: Number(line.slice(comma + 1)) || 0 });
+          let name = line.slice(0, comma);
+          if (/^\/?data_.*\.csv$/i.test(name)) {
+            if (!name.startsWith('/')) name = `/${name}`;
+            fileRows.push({ name, size: Number(line.slice(comma + 1)) || 0 });
+          }
         }
         log(raw);
         return;
@@ -906,7 +996,7 @@
       }
 
       if (downloadPending && line.startsWith('ERR')) {
-        downloadPending = false;
+        resetTransfers();
         setBusy(false);
         setStatus(line);
       }
@@ -941,9 +1031,10 @@
         return;
       }
 
-      fileList.innerHTML = fileRows.map((file) => {
+      fileList.innerHTML = fileRows.map((file, index) => {
         const size = file.size >= 1024 ? `${(file.size / 1024).toFixed(1)} KB` : `${file.size} B`;
-        return `<div class="file-row"><span class="file-name">${escapeHtml(file.name)}</span><span class="file-size">${size}</span></div>`;
+        const disabled = isConnected() ? '' : ' disabled';
+        return `<div class="file-row"><span class="file-name">${escapeHtml(file.name)}</span><span class="file-size">${size}</span><span class="file-actions"><button class="file-preview blue" data-preview-index="${index}"${disabled}><svg><use href="#icon-file"/></svg>Preview</button></span></div>`;
       }).join('');
     }
 
@@ -956,12 +1047,82 @@
         .replaceAll("'", '&#039;');
     }
 
+    function resetTransfers() {
+      receivingFile = false;
+      receivingPreview = false;
+      downloadPending = false;
+      fileTransferMode = 'idle';
+      downloadAllQueue = [];
+    }
+
+    function showPreviewPanel(text, name, path) {
+      previewFileName = name;
+      previewFilePath = path;
+      previewTitle.textContent = `${name} preview`;
+      dataPreview.value = text.trim() ? text : 'No lines in this data file.';
+      previewPanel.style.display = 'block';
+      downloadPreviewedButton.disabled = !path || !isConnected();
+      setStatus(`Preview ready: ${name} shows the last 20 lines at most.`);
+    }
+
     function showCsvPanel(csvText, name) {
       lastCsvText = csvText;
       lastCsvFileName = name;
       csvTitle.textContent = `${name} ready`;
       csvPreview.value = csvText;
       csvPanel.style.display = 'block';
+    }
+
+    function addFileToCombinedCsv(csvText, name) {
+      const lines = csvText.replace(/\r/g, '').split('\n').filter((line) => line.trim().length);
+      if (!lines.length) return;
+
+      const firstLineLooksLikeHeader = lines[0].includes('epoch_s') && lines[0].includes('position');
+      if (!downloadAllHeader && firstLineLooksLikeHeader) {
+        downloadAllHeader = lines[0];
+        downloadAllParts.push(downloadAllHeader);
+      }
+
+      lines.forEach((line, index) => {
+        if (firstLineLooksLikeHeader && index === 0) return;
+        downloadAllParts.push(line);
+      });
+    }
+
+    function finishDownloadAll() {
+      const name = `fruitometer_all_${new Date().toISOString().replaceAll(':', '-')}.csv`;
+      const csvText = downloadAllParts.length ? `${downloadAllParts.join('\n')}\n` : '';
+
+      resetTransfers();
+      if (!csvText.trim()) {
+        setStatus('No data received from the listed files.');
+        setBusy(false);
+        return;
+      }
+
+      showCsvPanel(csvText, name);
+
+      if (isBluefyLike()) {
+        setStatus(`${name} ready. Use Share CSV or Copy CSV on this device.`);
+      } else {
+        directDownloadCsv(csvText, name);
+        setStatus(`Downloaded ${name}.`);
+      }
+
+      setBusy(false);
+    }
+
+    async function startNextAllDownload() {
+      if (!downloadAllQueue.length) {
+        finishDownloadAll();
+        return;
+      }
+
+      const nextFile = downloadAllQueue.shift();
+      downloadPending = true;
+      fileCapture = '';
+      setStatus(`Downloading ${cleanDownloadName(nextFile)} (${downloadAllQueue.length + 1} remaining)...`);
+      await sendCommand(`data get ${nextFile}`, false);
     }
 
     function directDownloadCsv(csvText, name) {
@@ -1003,19 +1164,72 @@
       if (device && device.gatt.connected) device.gatt.disconnect();
     });
 
-    downloadCurrentButton.addEventListener('click', async () => {
+    async function previewFile(path) {
+      try {
+        setBusy(true);
+        await connectIfNeeded();
+        receiveText = '';
+        previewCapture = '';
+        previewFilePath = path;
+        fileTransferMode = 'preview';
+        downloadPending = true;
+        await sendCommand(`data preview ${path}`);
+      } catch (error) {
+        resetTransfers();
+        setBusy(false);
+        setStatus(error.message);
+      }
+    }
+
+    async function downloadFile(path) {
       try {
         setBusy(true);
         await connectIfNeeded();
         receiveText = '';
         fileCapture = '';
+        fileTransferMode = 'download';
         downloadPending = true;
-        await sendCommand(`time ${Math.floor(Date.now() / 1000)}`);
-        await sendCommand('data get current');
+        await sendCommand(`data get ${path}`);
       } catch (error) {
+        resetTransfers();
         setBusy(false);
         setStatus(error.message);
       }
+    }
+
+    async function downloadAllFiles() {
+      try {
+        const files = fileRows.map((file) => file.name).filter((name) => /^\/?data_.*\.csv$/i.test(name));
+        if (!files.length) {
+          setStatus('No data files are listed. Refresh first.');
+          return;
+        }
+
+        setBusy(true);
+        await connectIfNeeded();
+        receiveText = '';
+        fileTransferMode = 'downloadAll';
+        downloadAllQueue = files.slice();
+        downloadAllParts = [];
+        downloadAllHeader = '';
+        await startNextAllDownload();
+      } catch (error) {
+        resetTransfers();
+        setBusy(false);
+        setStatus(error.message);
+      }
+    }
+
+    downloadCurrentButton.addEventListener('click', () => {
+      previewFile('current');
+    });
+
+    previewCurrentButton.addEventListener('click', () => {
+      previewFile('current');
+    });
+
+    downloadAllButton.addEventListener('click', () => {
+      downloadAllFiles();
     });
 
     document.querySelectorAll('[data-command]').forEach((button) => {
@@ -1059,6 +1273,22 @@
 
     manualInput.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') sendButton.click();
+    });
+
+    fileList.addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-preview-index]');
+      if (!button) return;
+
+      const file = fileRows[Number(button.dataset.previewIndex)];
+      if (file) previewFile(file.name);
+    });
+
+    downloadPreviewedButton.addEventListener('click', () => {
+      if (!previewFilePath) {
+        setStatus('No file preview is selected.');
+        return;
+      }
+      downloadFile(previewFilePath);
     });
 
     saveCaptureButton.addEventListener('click', () => {
@@ -1126,6 +1356,10 @@
       const url = URL.createObjectURL(blob);
       window.open(url, '_blank');
       setTimeout(() => URL.revokeObjectURL(url), 30000);
+    });
+
+    closePreviewPanelButton.addEventListener('click', () => {
+      previewPanel.style.display = 'none';
     });
 
     closeCsvPanelButton.addEventListener('click', () => {
